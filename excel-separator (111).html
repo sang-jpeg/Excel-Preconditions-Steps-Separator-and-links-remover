@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Preconditions and Steps Separator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .upload-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px dashed #ddd;
+            border-radius: 4px;
+            text-align: center;
+            background-color: #fafafa;
+        }
+        .upload-section.dragover {
+            border-color: #007bff;
+            background-color: #e7f3ff;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        .settings {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .setting-item {
+            margin: 10px 0;
+        }
+        label {
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        input[type="text"] {
+            padding: 5px;
+            width: 300px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .download-btn {
+            background-color: #28a745;
+        }
+        .download-btn:hover {
+            background-color: #218838;
+        }
+        .preview {
+            margin-top: 20px;
+            overflow-x: auto;
+        }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .status {
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .hidden {
+            display: none;
+        }
+        .progress {
+            margin: 10px 0;
+        }
+        .stats {
+            margin: 15px 0;
+            font-size: 14px;
+            color: #666;
+        }
+        .example {
+            background-color: #f8f9fa;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Excel Preconditions and Steps Separator</h1>
+        
+        <div class="upload-section" id="uploadSection">
+            <p>📄 Upload your Excel file to separate preconditions and steps from column C</p>
+            <input type="file" id="fileInput" accept=".xlsx,.xls">
+            <p style="font-size: 12px; color: #666;">or drag and drop your file here</p>
+        </div>
+
+        <div class="settings">
+            <h3>⚙️ Separation Settings</h3>
+            <div class="setting-item">
+                <label>Precondition Keywords:</label>
+                <input type="text" id="precondKeywords" value="Precondition, Pre-condition, Prerequisites, Pre-requisites, Prerequisite, Pre-requisite">
+                <div class="example">These keywords help identify where preconditions begin</div>
+            </div>
+            <div class="setting-item">
+                <label>Steps Keywords:</label>
+                <input type="text" id="stepsKeywords" value="Steps, Test Steps, Procedure, Actions, Test Procedure">
+                <div class="example">These keywords help identify where steps begin</div>
+            </div>
+            <div class="setting-item">
+                <label>Column to Split (e.g., C):</label>
+                <input type="text" id="columnToSplit" value="C" style="width: 50px;">
+            </div>
+            <div class="setting-item">
+                <label>
+                    <input type="checkbox" id="useNumbering" checked>
+                    Also detect numbered steps (1., 2., 1), 2), etc.)
+                </label>
+            </div>
+            <div class="setting-item" style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
+                <label>
+                    <input type="checkbox" id="cleanLinks" checked>
+                    Clean image links in column
+                </label>
+                <input type="text" id="linkColumn" value="D" style="width: 50px; margin-left: 10px;">
+                <div class="example">Removes "!" and content after "|" from image links, and removes other URLs</div>
+            </div>
+        </div>
+
+        <div id="status" class="status hidden"></div>
+        <div id="stats" class="stats hidden"></div>
+
+        <div id="preview" class="preview hidden">
+            <h3>📋 Preview (First 10 rows)</h3>
+            <div id="previewTable" style="max-height: 400px; overflow-y: auto;"></div>
+            <div style="margin-top: 20px;">
+                <button id="downloadBtn" class="download-btn" onclick="downloadProcessed()">
+                    📥 Download Processed File
+                </button>
+                <button onclick="resetForm()">📝 Process Another File</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let workbook = null;
+        let processedData = null;
+        let originalFileName = '';
+
+        // Initialize event listeners
+        document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+
+        // Drag and drop functionality
+        const uploadSection = document.getElementById('uploadSection');
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
+                document.getElementById('fileInput').files = e.dataTransfer.files;
+                handleFileSelect({ target: { files: e.dataTransfer.files } });
+            }
+        });
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            originalFileName = file.name.replace(/\.[^/.]+$/, '');
+            showStatus('Reading file...', 'info');
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    workbook = XLSX.read(data, {type: 'array'});
+                    showStatus('File loaded successfully. Processing...', 'info');
+                    setTimeout(() => processFile(), 100); // Small delay for UI update
+                } catch (error) {
+                    showStatus('Error reading file: ' + error.message, 'error');
+                    console.error('Error details:', error);
+                }
+            };
+            reader.onerror = function(error) {
+                showStatus('Error reading file: ' + error.message, 'error');
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function processFile() {
+            try {
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ''});
+                
+                if (jsonData.length === 0) {
+                    showStatus('No data found in the file', 'error');
+                    return;
+                }
+
+                const columnToSplit = document.getElementById('columnToSplit').value.toUpperCase();
+                const columnIndex = columnToSplit.charCodeAt(0) - 65; // Convert A=0, B=1, C=2, etc.
+                
+                if (columnIndex < 0 || columnIndex >= jsonData[0].length) {
+                    showStatus(`Column ${columnToSplit} not found in the file`, 'error');
+                    return;
+                }
+
+                const precondKeywords = document.getElementById('precondKeywords').value
+                    .split(',')
+                    .map(k => k.trim().toLowerCase())
+                    .filter(k => k.length > 0);
+                const stepsKeywords = document.getElementById('stepsKeywords').value
+                    .split(',')
+                    .map(k => k.trim().toLowerCase())
+                    .filter(k => k.length > 0);
+                const useNumbering = document.getElementById('useNumbering').checked;
+                const cleanLinks = document.getElementById('cleanLinks').checked;
+                const linkColumn = document.getElementById('linkColumn').value.toUpperCase();
+                const linkColumnIndex = linkColumn.charCodeAt(0) - 65;
+
+                let processedCount = 0;
+                let skippedCount = 0;
+
+                // Process each row
+                processedData = jsonData.map((row, index) => {
+                    if (index === 0) {
+                        // Header row - replace the split column with new columns
+                        const newRow = [...row];
+                        newRow.splice(columnIndex, 1, 'Preconditions', 'Steps');
+                        return newRow;
+                    }
+
+                    const cellContent = row[columnIndex] || '';
+                    
+                    // Process the current row
+                    let newRow = [...row];
+                    
+                    if (cellContent.trim()) {
+                        const separated = separateContent(cellContent, precondKeywords, stepsKeywords, useNumbering);
+                        processedCount++;
+                        
+                        // Replace the original column with the two new columns
+                        newRow.splice(columnIndex, 1, separated.preconditions, separated.steps);
+                    } else {
+                        skippedCount++;
+                        // Replace with empty values for both columns
+                        newRow.splice(columnIndex, 1, '', '');
+                    }
+                    
+                    // Clean up Expected Result column if enabled
+                    if (cleanLinks && linkColumnIndex >= 0 && linkColumnIndex < newRow.length) {
+                        // Adjust index based on column removal
+                        let adjustedLinkIndex = linkColumnIndex;
+                        if (linkColumnIndex > columnIndex) {
+                            adjustedLinkIndex = linkColumnIndex + 1; // Shift by 1 because we added 2 columns and removed 1
+                        }
+                        
+                        if (newRow[adjustedLinkIndex]) {
+                            newRow[adjustedLinkIndex] = cleanExpectedResult(newRow[adjustedLinkIndex]);
+                        }
+                    }
+                    
+                    return newRow;
+                });
+
+                showStatus('✅ File processed successfully!', 'success');
+                showStats(processedCount, skippedCount);
+                showPreview();
+            } catch (error) {
+                showStatus('Error processing file: ' + error.message, 'error');
+                console.error('Processing error:', error);
+            }
+        }
+
+        function separateContent(content, precondKeywords, stepsKeywords, useNumbering) {
+            if (!content) return { preconditions: '', steps: '' };
+
+            // Split by common delimiters
+            const lines = content.split(/\r?\n|\r/).map(line => line.trim()).filter(line => line);
+            let preconditions = [];
+            let steps = [];
+            let currentSection = 'unknown';
+            let lastSectionIndex = -1;
+            let inReferencesSection = false;
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const lineLower = line.toLowerCase();
+
+                // Check if this is the references section (to be excluded)
+                if (lineLower.includes('references') && lineLower.includes('internal use only')) {
+                    inReferencesSection = true;
+                    continue; // Skip this line
+                }
+
+                // Check if this line is a section header
+                let isHeader = false;
+                
+                // Check for precondition keywords
+                for (const keyword of precondKeywords) {
+                    if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
+                        currentSection = 'preconditions';
+                        isHeader = true;
+                        lastSectionIndex = i;
+                        inReferencesSection = false; // Reset references flag
+                        break;
+                    }
+                }
+
+                // Check for steps keywords
+                if (!isHeader) {
+                    for (const keyword of stepsKeywords) {
+                        if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
+                            currentSection = 'steps';
+                            isHeader = true;
+                            lastSectionIndex = i;
+                            inReferencesSection = false; // Reset references flag
+                            break;
+                        }
+                    }
+                }
+
+                // If we haven't identified a section yet and useNumbering is true,
+                // check if this looks like a numbered step
+                if (currentSection === 'unknown' && useNumbering && !inReferencesSection) {
+                    if (/^[1-9]\d{0,2}[\.\)]\s/.test(line) || /^[1-9]\d{0,2}\s/.test(line)) {
+                        currentSection = 'steps';
+                        inReferencesSection = false; // Reset references flag
+                    }
+                }
+
+                // Skip lines that are in the references section
+                if (inReferencesSection) {
+                    // Check if we've reached the end of references section
+                    // (e.g., when we encounter a numbered step or steps keyword)
+                    if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
+                        inReferencesSection = false;
+                        currentSection = 'steps';
+                        steps.push(line);
+                    }
+                    continue;
+                }
+
+                // Add the line to the appropriate section (skip headers)
+                if (!isHeader && line && !inReferencesSection) {
+                    if (currentSection === 'preconditions') {
+                        preconditions.push(line);
+                    } else if (currentSection === 'steps') {
+                        steps.push(line);
+                    } else {
+                        // If we can't determine the section, check if it's a numbered item
+                        if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
+                            steps.push(line);
+                        } else {
+                            // Default to preconditions if it appears before any steps
+                            if (steps.length === 0) {
+                                preconditions.push(line);
+                            } else {
+                                steps.push(line);
+                            }
+                        }
+                    }
+                }
+            }
+
+            return {
+                preconditions: preconditions.join('\n'),
+                steps: steps.join('\n')
+            };
+        }
+
+        function cleanExpectedResult(content) {
+            if (!content || typeof content !== 'string') return content;
+            
+            // Check if content has any links to clean
+            const hasQmetryLinks = /!([^|!]+)\|[^!]*!/.test(content);
+            const hasOtherLinks = /https?:\/\/(?!qtmcloud\.qmetry\.com)[^\s]+/.test(content);
+            
+            // If no links to clean, return content as-is to preserve formatting
+            if (!hasQmetryLinks && !hasOtherLinks) {
+                return content;
+            }
+            
+            let cleaned = content;
+            
+            // First, extract QMetry image URLs from !URL|dimensions! format
+            const qmetryUrls = [];
+            cleaned = cleaned.replace(/!([^|!]+)\|[^!]*!/g, (match, url) => {
+                if (url.includes('qtmcloud.qmetry.com')) {
+                    qmetryUrls.push(url);
+                    return '###QMETRY_URL_' + (qmetryUrls.length - 1) + '###';
+                }
+                return '';
+            });
+            
+            // Remove any other URLs (like Atlassian links)
+            cleaned = cleaned.replace(/https?:\/\/(?!###QMETRY_URL_)[^\s]+/g, '');
+            
+            // Restore the QMetry URLs
+            qmetryUrls.forEach((url, index) => {
+                cleaned = cleaned.replace('###QMETRY_URL_' + index + '###', url);
+            });
+            
+            // Clean up extra spaces but preserve line breaks
+            cleaned = cleaned.replace(/[ \t]+/g, ' '); // Replace multiple spaces/tabs with single space
+            cleaned = cleaned.replace(/^ +| +$/gm, ''); // Trim spaces from start/end of lines
+            
+            // Ensure text starting with (*) is on a new line
+            // First, replace any space before (*) with a newline
+            cleaned = cleaned.replace(/\s*(\(\*)/g, '\n$1');
+            
+            // Remove any leading newlines
+            cleaned = cleaned.replace(/^\n+/, '');
+            
+            // Clean up multiple consecutive newlines (keep maximum 2)
+            cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+            
+            return cleaned.trim();
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+            statusEl.classList.remove('hidden');
+        }
+
+        function showStats(processed, skipped) {
+            const statsEl = document.getElementById('stats');
+            statsEl.textContent = `Processed: ${processed} rows | Skipped: ${skipped} empty rows`;
+            statsEl.classList.remove('hidden');
+        }
+
+        function showPreview() {
+            const previewEl = document.getElementById('preview');
+            const tableEl = document.getElementById('previewTable');
+            
+            // Create preview table
+            let html = '<table><thead><tr>';
+            
+            // Headers
+            processedData[0].forEach((header, index) => {
+                html += `<th>${header || 'Column ' + (index + 1)}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            // Show first 10 rows
+            const rowsToShow = Math.min(11, processedData.length);
+            for (let i = 1; i < rowsToShow; i++) {
+                html += '<tr>';
+                processedData[i].forEach(cell => {
+                    const cellContent = String(cell || '');
+                    const displayContent = cellContent.length > 100 ? 
+                        cellContent.substring(0, 100) + '...' : cellContent;
+                    html += `<td title="${cellContent.replace(/"/g, '&quot;')}">${displayContent}</td>`;
+                });
+                html += '</tr>';
+            }
+            
+            if (processedData.length > 11) {
+                html += `<tr><td colspan="${processedData[0].length}" style="text-align: center; font-style: italic;">
+                    ... and ${processedData.length - 11} more rows
+                </td></tr>`;
+            }
+            
+            html += '</tbody></table>';
+            tableEl.innerHTML = html;
+            
+            previewEl.classList.remove('hidden');
+            
+            // Enable download button
+            document.getElementById('downloadBtn').disabled = false;
+        }
+
+        function downloadProcessed() {
+            if (!processedData || processedData.length === 0) {
+                showStatus('No data to download', 'error');
+                return;
+            }
+
+            try {
+                // Create new worksheet from processed data
+                const ws = XLSX.utils.aoa_to_sheet(processedData);
+                
+                // Create new workbook
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Processed");
+                
+                // Generate filename
+                const fileName = originalFileName + "_separated.xlsx";
+                
+                // Trigger download
+                XLSX.writeFile(wb, fileName);
+                
+                showStatus('✅ File downloaded successfully!', 'success');
+            } catch (error) {
+                showStatus('Error downloading file: ' + error.message, 'error');
+                console.error('Download error:', error);
+                
+                // Alternative download method
+                try {
+                    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                    const blob = new Blob([wbout], { type: 'application/octet-stream' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showStatus('✅ File downloaded successfully!', 'success');
+                } catch (altError) {
+                    showStatus('Error with alternative download: ' + altError.message, 'error');
+                }
+            }
+        }
+
+        function resetForm() {
+            document.getElementById('fileInput').value = '';
+            document.getElementById('preview').classList.add('hidden');
+            document.getElementById('status').classList.add('hidden');
+            document.getElementById('stats').classList.add('hidden');
+            workbook = null;
+            processedData = null;
+            originalFileName = '';
+        }
+
+        // Test download functionality on page load
+        window.addEventListener('load', () => {
+            if (typeof XLSX === 'undefined') {
+                showStatus('Error: XLSX library not loaded. Please refresh the page.', 'error');
+            }
+        });
+    </script>
+</body>
+</html>
