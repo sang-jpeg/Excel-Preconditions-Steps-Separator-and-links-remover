@@ -82,21 +82,25 @@
         }
         .preview {
             margin-top: 20px;
+        }
+        .preview-container {
             overflow-x: auto;
+            max-height: 600px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
         }
         table {
             border-collapse: collapse;
             width: 100%;
-            margin-top: 10px;
+            min-width: 800px;
         }
         th, td {
             border: 1px solid #ddd;
             padding: 8px;
             text-align: left;
-            max-width: 300px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            vertical-align: top;
         }
         th {
             background-color: #f2f2f2;
@@ -104,9 +108,43 @@
             position: sticky;
             top: 0;
             z-index: 10;
+            box-shadow: 0 2px 2px -1px rgba(0, 0, 0, 0.1);
         }
         tr:nth-child(even) {
             background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #e8f4ff;
+        }
+        .cell-content {
+            position: relative;
+            max-width: 300px;
+        }
+        .cell-preview {
+            max-height: 60px; 
+            overflow: hidden;
+            position: relative;
+        }
+        .cell-preview.expanded {
+            max-height: none;
+        }
+        tr.expandable-row {
+            cursor: pointer;
+        }
+        tr.expandable-row:hover {
+            background-color: #e8f4ff;
+        }
+        .row-expand-indicator {
+            text-align: center;
+            vertical-align: middle;
+            width: 30px;
+            color: #007bff;
+            font-weight: bold;
+            cursor: pointer;
+            user-select: none;
+        }
+        .row-expand-indicator:hover {
+            background-color: #d4edda;
         }
         .status {
             margin: 15px 0;
@@ -146,6 +184,69 @@
             border-radius: 4px;
             font-size: 12px;
             color: #666;
+        }
+        .preview-controls {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .preview-info {
+            font-size: 14px;
+            color: #666;
+        }
+        .toggle-btn {
+            background-color: #6c757d;
+            font-size: 14px;
+            padding: 5px 15px;
+        }
+        .toggle-btn:hover {
+            background-color: #5a6268;
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 15px;
+            }
+            input[type="text"] {
+                width: 100%;
+                max-width: 300px;
+            }
+            .preview-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .cell-content {
+                max-width: 200px;
+            }
+            table {
+                font-size: 14px;
+            }
+            th, td {
+                padding: 5px;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 24px;
+            }
+            button {
+                width: 100%;
+                margin: 5px 0;
+            }
+            .settings {
+                padding: 10px;
+            }
         }
     </style>
 </head>
@@ -201,9 +302,20 @@
         </div>
 
         <div id="preview" class="preview hidden">
-            <h3>📋 Preview (First 10 rows)</h3>
-            <div id="previewTable" style="max-height: 400px; overflow-y: auto;"></div>
-            <div style="margin-top: 20px;">
+            <h3>📋 Preview</h3>
+            <div class="preview-controls">
+                <div class="preview-info">
+                    <span id="rowCount"></span> | Click any cell to expand/collapse
+                </div>
+                <div>
+                    <button class="toggle-btn" onclick="toggleAllCells(false)">Collapse All</button>
+                    <button class="toggle-btn" onclick="toggleAllCells(true)">Expand All</button>
+                </div>
+            </div>
+            <div class="preview-container">
+                <div id="previewTable"></div>
+            </div>
+            <div style="margin-top: 20px; text-align: center;">
                 <button id="downloadBtn" class="download-btn" onclick="downloadProcessed()">
                     📥 Download Processed File
                 </button>
@@ -360,26 +472,16 @@
             let steps = [];
             let currentSection = 'unknown';
             let lastSectionIndex = -1;
-            let inReferencesSection = false;
-            let referencesBuffer = [];
-            let referencesHasLinks = false;
+            let skipUntilNextSection = false;
 
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
                 const lineLower = line.toLowerCase();
 
-                // Check if this is the references section (for internal use only)
-                if (lineLower.includes('references') && lineLower.includes('internal use only')) {
-                    inReferencesSection = true;
-                    continue; // Skip this line
-                }
-                
-                // Check if this is a general references section (to be conditionally kept)
-                if (lineLower.includes('references:') || lineLower === 'references') {
-                    // Start buffering references section
-                    referencesBuffer = [line];
-                    referencesHasLinks = false;
-                    inReferencesSection = 'conditional';
+                // Check if this is any type of references section
+                if ((lineLower.includes('references') && (lineLower.includes('internal') || lineLower.includes('user'))) ||
+                    (lineLower.includes('*references') && lineLower.includes(':*'))) {
+                    skipUntilNextSection = true;
                     continue;
                 }
 
@@ -389,18 +491,10 @@
                 // Check for precondition keywords
                 for (const keyword of precondKeywords) {
                     if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
-                        // Before switching sections, handle any buffered references
-                        if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
-                            if (!referencesHasLinks && currentSection === 'preconditions') {
-                                preconditions.push(...referencesBuffer);
-                            }
-                            referencesBuffer = [];
-                        }
-                        
                         currentSection = 'preconditions';
                         isHeader = true;
                         lastSectionIndex = i;
-                        inReferencesSection = false;
+                        skipUntilNextSection = false;
                         break;
                     }
                 }
@@ -409,18 +503,10 @@
                 if (!isHeader) {
                     for (const keyword of stepsKeywords) {
                         if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
-                            // Before switching sections, handle any buffered references
-                            if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
-                                if (!referencesHasLinks && currentSection === 'preconditions') {
-                                    preconditions.push(...referencesBuffer);
-                                }
-                                referencesBuffer = [];
-                            }
-                            
                             currentSection = 'steps';
                             isHeader = true;
                             lastSectionIndex = i;
-                            inReferencesSection = false;
+                            skipUntilNextSection = false;
                             break;
                         }
                     }
@@ -428,48 +514,18 @@
 
                 // If we haven't identified a section yet and useNumbering is true,
                 // check if this looks like a numbered step
-                if (currentSection === 'unknown' && useNumbering && !inReferencesSection) {
+                if (!isHeader && currentSection === 'unknown' && useNumbering) {
                     if (/^[1-9]\d{0,2}[\.\)]\s/.test(line) || /^[1-9]\d{0,2}\s/.test(line)) {
-                        // Before switching sections, handle any buffered references
-                        if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
-                            if (!referencesHasLinks && currentSection === 'preconditions') {
-                                preconditions.push(...referencesBuffer);
-                            }
-                            referencesBuffer = [];
-                        }
-                        
                         currentSection = 'steps';
-                        inReferencesSection = false;
+                        skipUntilNextSection = false;
                     }
                 }
 
-                // Handle different types of references sections
-                if (inReferencesSection === true) {
-                    // Skip "References (for internal use only)" content entirely
+                // Skip content if we're in a references section
+                if (skipUntilNextSection) {
+                    // Check if we've hit a numbered step which means we're out of references
                     if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
-                        inReferencesSection = false;
-                        currentSection = 'steps';
-                        steps.push(line);
-                    }
-                    continue;
-                } else if (inReferencesSection === 'conditional') {
-                    // Buffer conditional references content
-                    if (line && !isHeader) {
-                        referencesBuffer.push(line);
-                        // Check if this line contains links
-                        if (/https?:\/\//.test(line) || /confluence/i.test(line)) {
-                            referencesHasLinks = true;
-                        }
-                    }
-                    
-                    // Check if we've reached a new section
-                    if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
-                        // End of references section - decide whether to keep it
-                        if (!referencesHasLinks && currentSection === 'preconditions') {
-                            preconditions.push(...referencesBuffer);
-                        }
-                        referencesBuffer = [];
-                        inReferencesSection = false;
+                        skipUntilNextSection = false;
                         currentSection = 'steps';
                         steps.push(line);
                     }
@@ -477,7 +533,13 @@
                 }
 
                 // Add the line to the appropriate section (skip headers)
-                if (!isHeader && line && !inReferencesSection) {
+                if (!isHeader && line && !skipUntilNextSection) {
+                    // Additional check for references content that might not have been caught
+                    if (lineLower.includes('confluence:') || 
+                        (lineLower.includes('refer to:') && lineLower.includes('confluence'))) {
+                        continue; // Skip this line
+                    }
+                    
                     if (currentSection === 'preconditions') {
                         preconditions.push(line);
                     } else if (currentSection === 'steps') {
@@ -495,13 +557,6 @@
                             }
                         }
                     }
-                }
-            }
-            
-            // Handle any remaining buffered references at the end
-            if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
-                if (!referencesHasLinks && currentSection === 'preconditions') {
-                    preconditions.push(...referencesBuffer);
                 }
             }
 
@@ -577,8 +632,11 @@
             const previewEl = document.getElementById('preview');
             const tableEl = document.getElementById('previewTable');
             
-            // Create preview table
+            // Create preview table with expand column
             let html = '<table><thead><tr>';
+            
+            // Add expand/collapse column header
+            html += '<th style="width: 30px;"></th>';
             
             // Headers
             processedData[0].forEach((header, index) => {
@@ -589,18 +647,46 @@
             // Show first 10 rows
             const rowsToShow = Math.min(11, processedData.length);
             for (let i = 1; i < rowsToShow; i++) {
-                html += '<tr>';
+                // Check if this row needs expansion capability
+                let rowNeedsExpansion = false;
                 processedData[i].forEach(cell => {
                     const cellContent = String(cell || '');
-                    const displayContent = cellContent.length > 100 ? 
-                        cellContent.substring(0, 100) + '...' : cellContent;
-                    html += `<td title="${cellContent.replace(/"/g, '&quot;')}">${displayContent}</td>`;
+                    if (cellContent.length > 100 || cellContent.includes('\n')) {
+                        rowNeedsExpansion = true;
+                    }
+                });
+                
+                const rowId = `row-${i}`;
+                html += `<tr id="${rowId}" class="${rowNeedsExpansion ? 'expandable-row' : ''}">`;
+                
+                // Add expand/collapse indicator cell
+                if (rowNeedsExpansion) {
+                    html += `<td class="row-expand-indicator" onclick="toggleRow('${rowId}')">▼</td>`;
+                } else {
+                    html += '<td></td>';
+                }
+                
+                processedData[i].forEach((cell, colIndex) => {
+                    const cellContent = String(cell || '');
+                    const cellId = `cell-${i}-${colIndex}`;
+                    
+                    // Format content for display
+                    const formattedContent = formatCellContent(cellContent);
+                    
+                    html += `<td>
+                        <div class="cell-content">
+                            <div class="cell-preview${rowNeedsExpansion ? '' : ' expanded'}" 
+                                 id="${cellId}">
+                                ${formattedContent}
+                            </div>
+                        </div>
+                    </td>`;
                 });
                 html += '</tr>';
             }
             
             if (processedData.length > 11) {
-                html += `<tr><td colspan="${processedData[0].length}" style="text-align: center; font-style: italic;">
+                html += `<tr><td colspan="${processedData[0].length + 1}" style="text-align: center; font-style: italic; color: #666;">
                     ... and ${processedData.length - 11} more rows
                 </td></tr>`;
             }
@@ -608,10 +694,65 @@
             html += '</tbody></table>';
             tableEl.innerHTML = html;
             
+            // Update row count
+            document.getElementById('rowCount').textContent = `Showing ${rowsToShow - 1} of ${processedData.length - 1} rows`;
+            
             previewEl.classList.remove('hidden');
             
             // Enable download button
             document.getElementById('downloadBtn').disabled = false;
+        }
+
+        function formatCellContent(content) {
+            // Escape HTML
+            content = content.replace(/&/g, '&amp;')
+                           .replace(/</g, '&lt;')
+                           .replace(/>/g, '&gt;')
+                           .replace(/"/g, '&quot;')
+                           .replace(/'/g, '&#039;');
+            
+            // Convert line breaks to <br> for display
+            content = content.replace(/\n/g, '<br>');
+            
+            return content;
+        }
+
+        function toggleRow(rowId) {
+            const row = document.getElementById(rowId);
+            const indicator = row.querySelector('.row-expand-indicator');
+            const cells = row.querySelectorAll('.cell-preview');
+            
+            const isExpanded = cells[0].classList.contains('expanded');
+            
+            cells.forEach(cell => {
+                if (isExpanded) {
+                    cell.classList.remove('expanded');
+                } else {
+                    cell.classList.add('expanded');
+                }
+            });
+            
+            indicator.textContent = isExpanded ? '▼' : '▲';
+        }
+
+        function toggleAllCells(expand) {
+            const rows = document.querySelectorAll('tr.expandable-row');
+            rows.forEach(row => {
+                const indicator = row.querySelector('.row-expand-indicator');
+                const cells = row.querySelectorAll('.cell-preview');
+                
+                cells.forEach(cell => {
+                    if (expand) {
+                        cell.classList.add('expanded');
+                    } else {
+                        cell.classList.remove('expanded');
+                    }
+                });
+                
+                if (indicator) {
+                    indicator.textContent = expand ? '▲' : '▼';
+                }
+            });
         }
 
         function downloadProcessed() {
