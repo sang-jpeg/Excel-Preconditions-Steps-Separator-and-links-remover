@@ -193,6 +193,12 @@
 
         <div id="status" class="status hidden"></div>
         <div id="stats" class="stats hidden"></div>
+        
+        <div id="processButton" class="hidden" style="text-align: center; margin: 20px 0;">
+            <button onclick="processFile()" style="background-color: #17a2b8; font-size: 18px; padding: 12px 30px;">
+                🔍 Preview Changes
+            </button>
+        </div>
 
         <div id="preview" class="preview hidden">
             <h3>📋 Preview (First 10 rows)</h3>
@@ -245,8 +251,9 @@
                 try {
                     const data = new Uint8Array(e.target.result);
                     workbook = XLSX.read(data, {type: 'array'});
-                    showStatus('File loaded successfully. Processing...', 'info');
-                    setTimeout(() => processFile(), 100); // Small delay for UI update
+                    showStatus('File loaded successfully. Click "Preview Changes" to see the results.', 'success');
+                    document.getElementById('processButton').classList.remove('hidden');
+                    document.getElementById('preview').classList.add('hidden');
                 } catch (error) {
                     showStatus('Error reading file: ' + error.message, 'error');
                     console.error('Error details:', error);
@@ -354,15 +361,26 @@
             let currentSection = 'unknown';
             let lastSectionIndex = -1;
             let inReferencesSection = false;
+            let referencesBuffer = [];
+            let referencesHasLinks = false;
 
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
                 const lineLower = line.toLowerCase();
 
-                // Check if this is the references section (to be excluded)
+                // Check if this is the references section (for internal use only)
                 if (lineLower.includes('references') && lineLower.includes('internal use only')) {
                     inReferencesSection = true;
                     continue; // Skip this line
+                }
+                
+                // Check if this is a general references section (to be conditionally kept)
+                if (lineLower.includes('references:') || lineLower === 'references') {
+                    // Start buffering references section
+                    referencesBuffer = [line];
+                    referencesHasLinks = false;
+                    inReferencesSection = 'conditional';
+                    continue;
                 }
 
                 // Check if this line is a section header
@@ -371,10 +389,18 @@
                 // Check for precondition keywords
                 for (const keyword of precondKeywords) {
                     if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
+                        // Before switching sections, handle any buffered references
+                        if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
+                            if (!referencesHasLinks && currentSection === 'preconditions') {
+                                preconditions.push(...referencesBuffer);
+                            }
+                            referencesBuffer = [];
+                        }
+                        
                         currentSection = 'preconditions';
                         isHeader = true;
                         lastSectionIndex = i;
-                        inReferencesSection = false; // Reset references flag
+                        inReferencesSection = false;
                         break;
                     }
                 }
@@ -383,10 +409,18 @@
                 if (!isHeader) {
                     for (const keyword of stepsKeywords) {
                         if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
+                            // Before switching sections, handle any buffered references
+                            if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
+                                if (!referencesHasLinks && currentSection === 'preconditions') {
+                                    preconditions.push(...referencesBuffer);
+                                }
+                                referencesBuffer = [];
+                            }
+                            
                             currentSection = 'steps';
                             isHeader = true;
                             lastSectionIndex = i;
-                            inReferencesSection = false; // Reset references flag
+                            inReferencesSection = false;
                             break;
                         }
                     }
@@ -396,16 +430,45 @@
                 // check if this looks like a numbered step
                 if (currentSection === 'unknown' && useNumbering && !inReferencesSection) {
                     if (/^[1-9]\d{0,2}[\.\)]\s/.test(line) || /^[1-9]\d{0,2}\s/.test(line)) {
+                        // Before switching sections, handle any buffered references
+                        if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
+                            if (!referencesHasLinks && currentSection === 'preconditions') {
+                                preconditions.push(...referencesBuffer);
+                            }
+                            referencesBuffer = [];
+                        }
+                        
                         currentSection = 'steps';
-                        inReferencesSection = false; // Reset references flag
+                        inReferencesSection = false;
                     }
                 }
 
-                // Skip lines that are in the references section
-                if (inReferencesSection) {
-                    // Check if we've reached the end of references section
-                    // (e.g., when we encounter a numbered step or steps keyword)
+                // Handle different types of references sections
+                if (inReferencesSection === true) {
+                    // Skip "References (for internal use only)" content entirely
                     if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
+                        inReferencesSection = false;
+                        currentSection = 'steps';
+                        steps.push(line);
+                    }
+                    continue;
+                } else if (inReferencesSection === 'conditional') {
+                    // Buffer conditional references content
+                    if (line && !isHeader) {
+                        referencesBuffer.push(line);
+                        // Check if this line contains links
+                        if (/https?:\/\//.test(line) || /confluence/i.test(line)) {
+                            referencesHasLinks = true;
+                        }
+                    }
+                    
+                    // Check if we've reached a new section
+                    if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
+                        // End of references section - decide whether to keep it
+                        if (!referencesHasLinks && currentSection === 'preconditions') {
+                            preconditions.push(...referencesBuffer);
+                        }
+                        referencesBuffer = [];
                         inReferencesSection = false;
                         currentSection = 'steps';
                         steps.push(line);
@@ -432,6 +495,13 @@
                             }
                         }
                     }
+                }
+            }
+            
+            // Handle any remaining buffered references at the end
+            if (inReferencesSection === 'conditional' && referencesBuffer.length > 0) {
+                if (!referencesHasLinks && currentSection === 'preconditions') {
+                    preconditions.push(...referencesBuffer);
                 }
             }
 
@@ -591,6 +661,7 @@
         function resetForm() {
             document.getElementById('fileInput').value = '';
             document.getElementById('preview').classList.add('hidden');
+            document.getElementById('processButton').classList.add('hidden');
             document.getElementById('status').classList.add('hidden');
             document.getElementById('stats').classList.add('hidden');
             workbook = null;
