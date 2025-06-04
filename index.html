@@ -273,6 +273,11 @@
                 <div class="example">These keywords help identify where steps begin</div>
             </div>
             <div class="setting-item">
+                <label>Expected Results Keywords:</label>
+                <input type="text" id="expectedKeywords" value="Expected Result, Expected Results, Expected Outcome, Expected">
+                <div class="example">These keywords help identify where expected results begin</div>
+            </div>
+            <div class="setting-item">
                 <label>Column to Split (e.g., C):</label>
                 <input type="text" id="columnToSplit" value="C" style="width: 50px;">
             </div>
@@ -283,6 +288,15 @@
                 </label>
             </div>
             <div class="setting-item" style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
+                <label>
+                    <input type="checkbox" id="appendToPreconditions">
+                    Append data from column
+                </label>
+                <input type="text" id="appendColumn" value="E" style="width: 50px; margin-left: 10px;">
+                <span> to Preconditions</span>
+                <div class="example">Data will be added as "Users applied: [data]" and the column will be removed</div>
+            </div>
+            <div class="setting-item" style="margin-top: 15px;">
                 <label>
                     <input type="checkbox" id="cleanLinks" checked>
                     Clean image links in column
@@ -404,10 +418,17 @@
                     .split(',')
                     .map(k => k.trim().toLowerCase())
                     .filter(k => k.length > 0);
+                const expectedKeywords = document.getElementById('expectedKeywords').value
+                    .split(',')
+                    .map(k => k.trim().toLowerCase())
+                    .filter(k => k.length > 0);
                 const useNumbering = document.getElementById('useNumbering').checked;
                 const cleanLinks = document.getElementById('cleanLinks').checked;
                 const linkColumn = document.getElementById('linkColumn').value.toUpperCase();
                 const linkColumnIndex = linkColumn.charCodeAt(0) - 65;
+                const appendToPreconditions = document.getElementById('appendToPreconditions').checked;
+                const appendColumn = document.getElementById('appendColumn').value.toUpperCase();
+                const appendColumnIndex = appendColumn.charCodeAt(0) - 65;
 
                 let processedCount = 0;
                 let skippedCount = 0;
@@ -416,8 +437,19 @@
                 processedData = jsonData.map((row, index) => {
                     if (index === 0) {
                         // Header row - replace the split column with new columns
-                        const newRow = [...row];
-                        newRow.splice(columnIndex, 1, 'Preconditions', 'Steps');
+                        let newRow = [...row];
+                        newRow.splice(columnIndex, 1, 'Preconditions', 'Steps', 'Expected Results');
+                        
+                        // Remove the append column if enabled
+                        if (appendToPreconditions && appendColumnIndex >= 0 && appendColumnIndex < newRow.length) {
+                            // Adjust the index if the append column comes after the split column
+                            let adjustedAppendIndex = appendColumnIndex;
+                            if (appendColumnIndex > columnIndex) {
+                                adjustedAppendIndex = appendColumnIndex + 2; // Account for the 2 extra columns added
+                            }
+                            newRow.splice(adjustedAppendIndex, 1);
+                        }
+                        
                         return newRow;
                     }
 
@@ -427,26 +459,58 @@
                     let newRow = [...row];
                     
                     if (cellContent.trim()) {
-                        const separated = separateContent(cellContent, precondKeywords, stepsKeywords, useNumbering);
+                        const separated = separateContent(cellContent, precondKeywords, stepsKeywords, expectedKeywords, useNumbering);
                         processedCount++;
                         
-                        // Replace the original column with the two new columns
-                        newRow.splice(columnIndex, 1, separated.preconditions, separated.steps);
+                        // Get data to append to preconditions if enabled
+                        let finalPreconditions = separated.preconditions;
+                        if (appendToPreconditions && appendColumnIndex >= 0 && appendColumnIndex < row.length) {
+                            const appendData = row[appendColumnIndex];
+                            if (appendData && appendData.toString().trim()) {
+                                // Add separator and appended data with "Users applied: " prefix
+                                const usersAppliedText = 'Users applied: ' + appendData.toString().trim();
+                                finalPreconditions = finalPreconditions 
+                                    ? finalPreconditions + '\n___\n' + usersAppliedText
+                                    : usersAppliedText;
+                            }
+                        }
+                        
+                        // Replace the original column with the three new columns
+                        newRow.splice(columnIndex, 1, finalPreconditions, separated.steps, separated.expectedResults);
                     } else {
                         skippedCount++;
-                        // Replace with empty values for both columns
-                        newRow.splice(columnIndex, 1, '', '');
+                        // Replace with empty values for all three columns
+                        newRow.splice(columnIndex, 1, '', '', '');
+                    }
+                    
+                    // Remove the append column if enabled
+                    if (appendToPreconditions && appendColumnIndex >= 0 && appendColumnIndex < newRow.length) {
+                        // Adjust the index if the append column comes after the split column
+                        let adjustedAppendIndex = appendColumnIndex;
+                        if (appendColumnIndex > columnIndex) {
+                            adjustedAppendIndex = appendColumnIndex + 2; // Account for the 2 extra columns added
+                        }
+                        newRow.splice(adjustedAppendIndex, 1);
                     }
                     
                     // Clean up Expected Result column if enabled
-                    if (cleanLinks && linkColumnIndex >= 0 && linkColumnIndex < newRow.length) {
-                        // Adjust index based on column removal
+                    if (cleanLinks && linkColumnIndex >= 0) {
+                        // Calculate the adjusted index for the link column
                         let adjustedLinkIndex = linkColumnIndex;
+                        
+                        // Adjust for the split column changes
                         if (linkColumnIndex > columnIndex) {
-                            adjustedLinkIndex = linkColumnIndex + 1; // Shift by 1 because we added 2 columns and removed 1
+                            adjustedLinkIndex += 2; // We added 3 columns and removed 1
                         }
                         
-                        if (newRow[adjustedLinkIndex]) {
+                        // Further adjust if we removed the append column
+                        if (appendToPreconditions && appendColumnIndex >= 0) {
+                            if (linkColumnIndex > appendColumnIndex) {
+                                adjustedLinkIndex -= 1; // We removed a column
+                            }
+                        }
+                        
+                        if (adjustedLinkIndex >= 0 && adjustedLinkIndex < newRow.length && newRow[adjustedLinkIndex]) {
                             newRow[adjustedLinkIndex] = cleanExpectedResult(newRow[adjustedLinkIndex]);
                         }
                     }
@@ -463,15 +527,15 @@
             }
         }
 
-        function separateContent(content, precondKeywords, stepsKeywords, useNumbering) {
-            if (!content) return { preconditions: '', steps: '' };
+        function separateContent(content, precondKeywords, stepsKeywords, expectedKeywords, useNumbering) {
+            if (!content) return { preconditions: '', steps: '', expectedResults: '' };
 
             // Split by common delimiters
             const lines = content.split(/\r?\n|\r/).map(line => line.trim()).filter(line => line);
             let preconditions = [];
             let steps = [];
+            let expectedResults = [];
             let currentSection = 'unknown';
-            let lastSectionIndex = -1;
             let skipUntilNextSection = false;
 
             for (let i = 0; i < lines.length; i++) {
@@ -493,7 +557,6 @@
                     if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
                         currentSection = 'preconditions';
                         isHeader = true;
-                        lastSectionIndex = i;
                         skipUntilNextSection = false;
                         break;
                     }
@@ -505,7 +568,18 @@
                         if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
                             currentSection = 'steps';
                             isHeader = true;
-                            lastSectionIndex = i;
+                            skipUntilNextSection = false;
+                            break;
+                        }
+                    }
+                }
+
+                // Check for expected results keywords
+                if (!isHeader) {
+                    for (const keyword of expectedKeywords) {
+                        if (lineLower.includes(keyword) && lineLower.indexOf(keyword) < 20) {
+                            currentSection = 'expectedResults';
+                            isHeader = true;
                             skipUntilNextSection = false;
                             break;
                         }
@@ -544,16 +618,20 @@
                         preconditions.push(line);
                     } else if (currentSection === 'steps') {
                         steps.push(line);
+                    } else if (currentSection === 'expectedResults') {
+                        expectedResults.push(line);
                     } else {
                         // If we can't determine the section, check if it's a numbered item
                         if (useNumbering && /^[1-9]\d{0,2}[\.\)]\s/.test(line)) {
                             steps.push(line);
                         } else {
                             // Default to preconditions if it appears before any steps
-                            if (steps.length === 0) {
+                            if (steps.length === 0 && expectedResults.length === 0) {
                                 preconditions.push(line);
-                            } else {
+                            } else if (steps.length > 0 && expectedResults.length === 0) {
                                 steps.push(line);
+                            } else {
+                                expectedResults.push(line);
                             }
                         }
                     }
@@ -562,7 +640,8 @@
 
             return {
                 preconditions: preconditions.join('\n'),
-                steps: steps.join('\n')
+                steps: steps.join('\n'),
+                expectedResults: expectedResults.join('\n')
             };
         }
 
