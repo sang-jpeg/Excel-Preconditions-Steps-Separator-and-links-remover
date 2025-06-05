@@ -30,10 +30,35 @@
             border-radius: 4px;
             text-align: center;
             background-color: #fafafa;
+            position: relative;
         }
         .upload-section.dragover {
             border-color: #007bff;
             background-color: #e7f3ff;
+        }
+        .file-info {
+            display: inline-block;
+            margin: 10px 0;
+            padding: 5px 10px;
+            background-color: #e7f3ff;
+            border-radius: 4px;
+            position: relative;
+        }
+        .clear-file {
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-left: 10px;
+            padding: 0;
+            line-height: 18px;
+        }
+        .clear-file:hover {
+            background-color: #c82333;
         }
         input[type="file"] {
             margin: 10px 0;
@@ -255,8 +280,15 @@
         <h1>Excel Preconditions and Steps Separator</h1>
         
         <div class="upload-section" id="uploadSection">
-            <p>📄 Upload your Excel file to separate preconditions and steps from column C</p>
-            <input type="file" id="fileInput" accept=".xlsx,.xls">
+            <p>📄 Upload Excel File for Processing</p>
+            <input type="file" id="fileInput" accept=".xlsx,.xls" style="display: none;">
+            <button id="chooseFileBtn" onclick="document.getElementById('fileInput').click()">Choose File</button>
+            <div id="fileInfo" style="display: none; margin-top: 10px;">
+                <span class="file-info">
+                    <span id="fileName"></span>
+                    <button class="clear-file" onclick="clearFile()" title="Clear file">×</button>
+                </span>
+            </div>
             <p style="font-size: 12px; color: #666;">or drag and drop your file here</p>
         </div>
 
@@ -304,6 +336,13 @@
                 <input type="text" id="linkColumn" value="D" style="width: 50px; margin-left: 10px;">
                 <div class="example">Removes "!" and content after "|" from image links, and removes other URLs</div>
             </div>
+            <div class="setting-item" style="border-top: 1px solid #ddd; margin-top: 15px; padding-top: 15px;">
+                <label>
+                    <input type="checkbox" id="formatGherkin" checked>
+                    Format Gherkin keywords (Given/When/Then/And/But)
+                </label>
+                <div class="example">Capitalizes keywords and puts each statement on a new line. Also formats numbered lists.</div>
+            </div>
         </div>
 
         <div id="status" class="status hidden"></div>
@@ -330,10 +369,10 @@
                 <div id="previewTable"></div>
             </div>
             <div style="margin-top: 20px; text-align: center;">
+                <button onclick="resetForm()">📝 Process Another File</button>
                 <button id="downloadBtn" class="download-btn" onclick="downloadProcessed()">
                     📥 Download Processed File
                 </button>
-                <button onclick="resetForm()">📝 Process Another File</button>
             </div>
         </div>
     </div>
@@ -360,8 +399,11 @@
             uploadSection.classList.remove('dragover');
             const file = e.dataTransfer.files[0];
             if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
-                document.getElementById('fileInput').files = e.dataTransfer.files;
-                handleFileSelect({ target: { files: e.dataTransfer.files } });
+                // Create a new FileList-like object
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                document.getElementById('fileInput').files = dataTransfer.files;
+                handleFileSelect({ target: { files: dataTransfer.files } });
             }
         });
 
@@ -370,6 +412,17 @@
             if (!file) return;
 
             originalFileName = file.name.replace(/\.[^/.]+$/, '');
+            
+            // Show file info and disable choose file button
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileInfo').style.display = 'block';
+            
+            // Disable the button with explicit styling
+            const chooseBtn = document.getElementById('chooseFileBtn');
+            chooseBtn.disabled = true;
+            chooseBtn.style.backgroundColor = '#6c757d';  // Grey color
+            chooseBtn.style.cursor = 'not-allowed';
+            
             showStatus('Reading file...', 'info');
 
             const reader = new FileReader();
@@ -383,10 +436,12 @@
                 } catch (error) {
                     showStatus('Error reading file: ' + error.message, 'error');
                     console.error('Error details:', error);
+                    clearFile(); // Clear on error
                 }
             };
             reader.onerror = function(error) {
                 showStatus('Error reading file: ' + error.message, 'error');
+                clearFile(); // Clear on error
             };
             reader.readAsArrayBuffer(file);
         }
@@ -429,6 +484,7 @@
                 const appendToPreconditions = document.getElementById('appendToPreconditions').checked;
                 const appendColumn = document.getElementById('appendColumn').value.toUpperCase();
                 const appendColumnIndex = appendColumn.charCodeAt(0) - 65;
+                const formatGherkin = document.getElementById('formatGherkin').checked;
 
                 let processedCount = 0;
                 let skippedCount = 0;
@@ -453,13 +509,15 @@
                         return newRow;
                     }
 
+                    // IMPORTANT: Fix formatting issues FIRST, before any processing
                     const cellContent = row[columnIndex] || '';
+                    const formattedContent = fixFormattingIssues(cellContent);
                     
                     // Process the current row
                     let newRow = [...row];
                     
-                    if (cellContent.trim()) {
-                        const separated = separateContent(cellContent, precondKeywords, stepsKeywords, expectedKeywords, useNumbering);
+                    if (formattedContent.trim()) {
+                        const separated = separateContent(formattedContent, precondKeywords, stepsKeywords, expectedKeywords, useNumbering);
                         processedCount++;
                         
                         // Get data to append to preconditions if enabled
@@ -477,6 +535,23 @@
                         
                         // Replace the original column with the three new columns
                         newRow.splice(columnIndex, 1, finalPreconditions, separated.steps, separated.expectedResults);
+                        
+                        // Format Gherkin keywords if enabled
+                        if (formatGherkin) {
+                            // Find the new positions of Steps and Expected Results columns
+                            const stepsIndex = columnIndex + 1;
+                            const expectedIndex = columnIndex + 2;
+                            
+                            // Format Steps column
+                            if (newRow[stepsIndex]) {
+                                newRow[stepsIndex] = formatGherkinContent(newRow[stepsIndex]);
+                            }
+                            
+                            // Format Expected Results column
+                            if (newRow[expectedIndex]) {
+                                newRow[expectedIndex] = formatGherkinContent(newRow[expectedIndex]);
+                            }
+                        }
                     } else {
                         skippedCount++;
                         // Replace with empty values for all three columns
@@ -530,7 +605,7 @@
         function separateContent(content, precondKeywords, stepsKeywords, expectedKeywords, useNumbering) {
             if (!content) return { preconditions: '', steps: '', expectedResults: '' };
 
-            // Split by common delimiters
+            // Content has already been formatted, just split by lines
             const lines = content.split(/\r?\n|\r/).map(line => line.trim()).filter(line => line);
             let preconditions = [];
             let steps = [];
@@ -645,6 +720,100 @@
             };
         }
 
+        function fixFormattingIssues(content) {
+            if (!content || typeof content !== 'string') return content;
+            
+            let fixed = content;
+            
+            // First pass: Fix numbered items that are joined
+            // Pattern for: "1- text text 2- text" or "1. text text 2. text" etc.
+            fixed = fixed.replace(/([a-zA-Z.,;!?])\s*(\d+[\-\.\)]\s*)/g, '$1\n$2');
+            
+            // Fix Roman numerals
+            fixed = fixed.replace(/([a-zA-Z.,;!?])\s*([ivxIVX]+[\-\.\)]\s*)/g, '$1\n$2');
+            
+            // Pattern 1: Fix "User" statements that are concatenated
+            fixed = fixed.replace(/([a-z\)])(\s*User\s+)/g, '$1\n$2');
+            fixed = fixed.replace(/([a-z\)])(\s*The\s+user\s+)/g, '$1\n$2');
+            
+            // Pattern 2: Fix common test condition patterns
+            const testPatterns = [
+                'Device\\s+', 'System\\s+', 'App\\s+', 'Application\\s+',
+                'Browser\\s+', 'Network\\s+', 'Internet\\s+', 'Account\\s+',
+                'Subscription\\s+', 'Download\\s+', 'Episode\\s+', 'Content\\s+',
+                'Video\\s+', 'Audio\\s+', 'Playback\\s+', 'Player\\s+',
+                'Button\\s+', 'Page\\s+', 'Screen\\s+', 'Menu\\s+'
+            ];
+            
+            testPatterns.forEach(pattern => {
+                const regex = new RegExp(`([a-z\\)])(\s*${pattern})`, 'g');
+                fixed = fixed.replace(regex, '$1\n$2');
+            });
+            
+            // Pattern 3: Detect "available" followed by a new condition
+            fixed = fixed.replace(/(available|enabled|disabled|visible|hidden|loaded|playing|paused|stopped)([A-Z])/g, '$1\n$2');
+            
+            // Pattern 4: Fix lowercase to uppercase transitions (sentence boundaries)
+            // But be more aggressive - any lowercase followed by uppercase likely indicates new sentence
+            fixed = fixed.replace(/([a-z])([A-Z])/g, (match, p1, p2, offset) => {
+                // Get surrounding context
+                const before = fixed.substring(Math.max(0, offset - 5), offset);
+                const after = fixed.substring(offset + 2, Math.min(fixed.length, offset + 10));
+                
+                // List of known exceptions (like iPhone, eMail, etc.)
+                const exceptions = ['iPhone', 'iPad', 'iOS', 'macOS', 'tvOS', 'eMail', 'eBook'];
+                const word = p1 + p2 + after.match(/^[a-z]+/)?.[0] || '';
+                
+                if (exceptions.some(ex => word.includes(ex.substring(1)))) {
+                    return match;
+                }
+                
+                // If it looks like end of sentence followed by new sentence
+                if (/[a-zA-Z]$/.test(before) && /^[a-z]/.test(after)) {
+                    return p1 + '\n' + p2;
+                }
+                
+                return match;
+            });
+            
+            // Pattern 5: Fix specific keyword patterns that start new conditions
+            const conditionStarters = [
+                'Valid', 'Invalid', 'Active', 'Inactive', 'Enabled', 'Disabled',
+                'Connected', 'Disconnected', 'Available', 'Unavailable',
+                'Logged', 'Guest', 'Premium', 'Free', 'Subscribed',
+                'Online', 'Offline', 'Downloaded', 'Streaming'
+            ];
+            
+            conditionStarters.forEach(starter => {
+                const regex = new RegExp(`([a-z\\)])(\s*${starter}\\s+)`, 'g');
+                fixed = fixed.replace(regex, '$1\n$2');
+            });
+            
+            // Pattern 6: Detect common sentence endings followed by new content
+            fixed = fixed.replace(/(\.|\!|\?)([A-Z])/g, '$1\n$2');
+            
+            // Pattern 7: Fix "with/has/is" patterns that often indicate joined conditions
+            fixed = fixed.replace(/(subscription|account|device|connection|network)([A-Z])/g, '$1\n$2');
+            
+            // Pattern 8: Fix parentheses content that starts new condition
+            fixed = fixed.replace(/(\))([A-Z])/g, '$1\n$2');
+            
+            // Pattern 9: Detect "And" that starts new conditions/actions
+            fixed = fixed.replace(/([a-z\.\!\?])(\s*And\s+)/g, '$1\n$2');
+            
+            // Pattern 10: Fix specific patterns from your example
+            // "downloads availableUser" -> "downloads available\nUser"
+            fixed = fixed.replace(/(available|unavailable|enabled|disabled|visible|hidden)(User)/g, '$1\n$2');
+            
+            // Clean up any multiple newlines created
+            fixed = fixed.replace(/\n{3,}/g, '\n\n');
+            
+            // Trim each line
+            fixed = fixed.split('\n').map(line => line.trim()).filter(line => line).join('\n');
+            
+            return fixed;
+        }
+
         function cleanExpectedResult(content) {
             if (!content || typeof content !== 'string') return content;
             
@@ -692,6 +861,92 @@
             cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
             
             return cleaned.trim();
+        }
+
+        function formatGherkinContent(content) {
+            if (!content || typeof content !== 'string') return content;
+            
+            // First, format any numbering patterns
+            content = formatNumberedContent(content);
+            
+            // Gherkin keywords to look for
+            const gherkinKeywords = ['Given', 'When', 'Then', 'And', 'But'];
+            
+            let result = content;
+            
+            // Capitalize Gherkin keywords
+            gherkinKeywords.forEach(keyword => {
+                const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+                result = result.replace(regex, keyword);
+            });
+            
+            // Add line breaks only before Gherkin keywords that have text before them
+            // This regex looks for: (some text) (whitespace) (Gherkin keyword) (whitespace) (more text)
+            const keywordPattern = new RegExp(`([^\\n]+)\\s+(${gherkinKeywords.join('|')})\\s+`, 'g');
+            result = result.replace(keywordPattern, '$1\n$2 ');
+            
+            return result.trim();
+        }
+
+        function formatNumberedContent(content) {
+            if (!content || typeof content !== 'string') return content;
+            
+            // Only format specific numbering patterns, not breaking up regular text
+            const numberingPatterns = [
+                // Match lines that start with numbering patterns
+                /^(\d+(?:\.\d+)*)[).\-]?\s*/gm,  // 1, 1.1, 1.1.1
+                /^([a-zA-Z](?:\.\d+)*)[).\-]?\s*/gm,  // a, a.1, A.1
+                /^([ivxIVX]+)[).\-]?\s*/gm,  // i, ii, iii
+                /^\((\d+|[a-zA-Z])\)\s*/gm,  // (1), (a)
+                /^(\d+[a-zA-Z])[).\-]?\s*/gm,  // 1a, 1b
+                /^([*\-•])\s+/gm  // bullet points
+            ];
+            
+            // Split into lines and process each
+            let lines = content.split(/\n/);
+            let result = [];
+            
+            for (let line of lines) {
+                // Check if this line needs to be split by numbering
+                let processed = false;
+                for (let pattern of numberingPatterns) {
+                    if (pattern.test(line)) {
+                        // This line starts with a number, don't split it further
+                        result.push(line);
+                        processed = true;
+                        break;
+                    }
+                }
+                
+                if (!processed) {
+                    // Check if line contains inline numbering that should be split
+                    let modifiedLine = line;
+                    
+                    // Look for numbering patterns that appear after text
+                    const inlinePattern = /(.+?)\s+(\d+(?:\.\d+)*[).\-]?\s+)/g;
+                    if (inlinePattern.test(line)) {
+                        // Split inline numbered items
+                        modifiedLine = line.replace(/\s+(\d+(?:\.\d+)*[).\-]?\s+)/g, '\n$1');
+                    }
+                    
+                    result.push(modifiedLine);
+                }
+            }
+            
+            return result.join('\n').trim();
+        }
+
+        function clearFile() {
+            document.getElementById('fileInput').value = '';
+            document.getElementById('fileInfo').style.display = 'none';
+            document.getElementById('fileName').textContent = '';
+            document.getElementById('processButton').classList.add('hidden');
+            document.getElementById('preview').classList.add('hidden');
+            document.getElementById('status').classList.add('hidden');
+            document.getElementById('stats').classList.add('hidden');
+            workbook = null;
+            processedData = null;
+            originalFileName = '';
         }
 
         function showStatus(message, type) {
